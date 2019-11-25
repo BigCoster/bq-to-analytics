@@ -10,7 +10,7 @@ LOG_PATH = os.path.join(basedir, 'app.log')
 PROJ = [
     {'view': '172487921', 'site': 'abc-decor.com', 'tracker': 'UA-116546585-1'},
     {'view': '112798836', 'site': 'art-oboi.com.ua', 'tracker': 'UA-70903943-1'},
-    {'view': '113470694', 'site': 'walldeco', 'tracker': 'UA-71429340-1'},
+    {'view': '113470694', 'site': 'walldeco.ua', 'tracker': 'UA-71429340-1'},
     {'view': '91697505', 'site': 'art-holst.com.ua', 'tracker': 'UA-25405474-7'},
     {'view': '91906521', 'site': 'klv-oboi.ru', 'tracker': 'UA-31244245-1'},
     {'view': '166286564', 'site': 'fotooboi.biz', 'tracker': 'UA-111167426-1'},

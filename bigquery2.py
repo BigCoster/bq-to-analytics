@@ -23,18 +23,19 @@ log.addHandler(filehandler)
 
 
 class ProcessData:
-    def __init__(self, google_cred_path, google_proj_id):
+    def __init__(self, google_cred_path, google_proj_id, date_time):
         # client init ga
         self.conn = GoogleAnalyticsQueryV4(secrets=google_cred_path)
         # client init bq
         self.cred = service_account.Credentials.from_service_account_file(google_cred_path)
         self.client = bigquery.Client(project=google_proj_id, credentials=self.cred)
+        self.dt = date_time
 
     def ga(self, view):
         startDate = 4
         endDate = 0
-        dfga = pd.DataFrame()
-        dfga_temp = pd.DataFrame()
+        df_ga = pd.DataFrame()
+        df_ga_temp = pd.DataFrame()
         for i in range(5):
             query = {
                 'reportRequests': [{
@@ -60,74 +61,74 @@ class ProcessData:
 
             for _ in range(10):
                 try:
-                    dfga_temp = self.conn.execute_query(query)
+                    df_ga_temp = self.conn.execute_query(query)
                     break
                 except HttpError as msg:
                     log.exception(msg)
-            dfga = pd.concat([dfga, dfga_temp], sort=False)
+            df_ga = pd.concat([df_ga, df_ga_temp], sort=False)
             startDate = startDate + 5
             endDate = endDate + 5
-        dfga['eventLabel'] = dfga['eventLabel'].str.replace('[^0-9]', '', regex=True)
-        return dfga
+        df_ga['eventLabel'] = df_ga['eventLabel'].str.replace('[^0-9]', '', regex=True)
+        return df_ga
 
     def bq(self, site):
-        # get all phones in 40 days
-        # bq sql query and saving to df
-        dfbq = self.client.query("""
+        # get all orders from bq
+        df_order = self.client.query("""
             SELECT *
-            FROM ones.invoice
-            WHERE date >= '{}'
-        """.format((datetime.now()-timedelta(15)).strftime('%Y-%m-%d'))).to_dataframe()
+            FROM ones.order
+            WHERE DATE(date) = '{0}'
+              AND site LIKE  '{1}%'
+         """.format(self.dt.strftime('%Y-%m-%d'), site)
+                                 ).to_dataframe()
 
-        # get all contacts from bq
-        dfContact = self.client.query("""
+        # get api.request from bq only with cid
+        df_api = self.client.query("""
             SELECT *
             FROM api.request
-            WHERE date >= '{}'
-        """.format((datetime.now()-timedelta(45)).strftime('%Y-%m-%d'))).to_dataframe()
-        # strip empty rows
-        dfContactCid = dfContact[~((dfContact.cid == '') | (dfContact.cid == '0') | (dfContact.cid.isna()))]
-        # get timeframe (based on bq table updating frequency)
-        # select sub dataframe by timeframe
-        dfcurrent = dfbq[dfbq['date'] == datetime.now().strftime('%Y-%m-%d')]
-        # dfcurrent = dfbq[dfbq['date'] == (datetime.now() - timedelta(1)).strftime('%Y-%m-%d')]  # test
-        # select sub dataframe by domain
-        dfcurrentsite = dfcurrent[dfcurrent['site'].str.contains(site)]
-        # create list with phones  from sub dataframe
-        list_phones = list(dfcurrentsite['phone'].unique())
-        return list_phones, dfContactCid
+            WHERE date >= '{0}'
+              AND site LIKE  '{1}%'
+              AND cid IS NOT NULL
+              AND cid != '0'
+              AND cid != ''
+        """.format((self.dt-timedelta(45)).strftime('%Y-%m-%d'), site)
+                                  ).to_dataframe()
+        order_phones = list(df_order['phone'].unique())
+        return order_phones, df_api
 
     @staticmethod
-    def sender(dfga, list_phones, dfContactCid, tracker):
+    def sender(tracker, order_phones, df_ga, df_api):
         cnt = 0
-        for phone in list_phones:
-            matcher = dfga[dfga['eventLabel'].str.contains(str(phone))]
-            if len(matcher):
-                cid = matcher['clientId'].iloc[0]
+        for phone in order_phones:
+            cid = None
+            # check if phone exist in GA
+            match = df_ga[df_ga['eventLabel'].str.contains(phone)]
+            if len(match):
+                cid = match['clientId'].iloc[0]
+            elif not df_api.empty:
+                # check if phone exist in BQ api.requests
+                match = df_api[df_api['phone'].str.contains(phone)]
+                if len(match):
+                    cid = match['cid'].iloc[0]
+            if cid:
                 cnt = cnt + 1
-                data = event('Verified Order', cid)
-                report(tracker, cid, data)
-            else:
-                cidMatch = dfContactCid[dfContactCid['phone'].str.contains(str(phone))]
-                if len(cidMatch):
-                    cid = cidMatch['cid'].iloc[0]
-                    cnt = cnt + 1
-                    data = event('Verified Order', cid)
-                    report(tracker, cid, data)
+                # send event to GA
+                report(tracker, cid, event('Verified Order', cid))
         try:
-            prc = cnt / len(list_phones) * 100
+            prc = cnt / len(order_phones) * 100
             prc = round(prc, 2)
         except ZeroDivisionError:
             prc = 'inf'
-        log.info('{}, {} matched orders, {} all orders, {}% matched'.format(tracker, cnt, len(list_phones), prc))
+        log.info('{}, {} matched orders, {} all orders, {}% matched'.format(tracker, cnt, len(order_phones), prc))
 
     def full(self, view, site, tracker):
-        dfga = self.ga(view)
-        dfcurrentsite, dfContactCid = self.bq(site)
-        self.sender(dfga, dfcurrentsite, dfContactCid, tracker)
+        df_ga = self.ga(view)
+        order_phones, df_api = self.bq(site)
+        self.sender(tracker, order_phones, df_ga, df_api)
 
 
 if __name__ == '__main__':
-    proc = ProcessData(GOOGLE_CRED_PATH, GOOGLE_PROJ_ID)
+    date_time = datetime.now()
+    # date_time = date_time - timedelta(2)  # testing
+    proc = ProcessData(GOOGLE_CRED_PATH, GOOGLE_PROJ_ID, date_time)
     for proj in PROJ:
         proc.full(**proj)
