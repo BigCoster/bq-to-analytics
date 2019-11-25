@@ -30,7 +30,7 @@ class ProcessData:
         self.cred = service_account.Credentials.from_service_account_file(google_cred_path)
         self.client = bigquery.Client(project=google_proj_id, credentials=self.cred)
 
-    def ga(self, view, dimensionindex):
+    def ga(self, view):
         startDate = 4
         endDate = 0
         dfga = pd.DataFrame()
@@ -43,8 +43,7 @@ class ProcessData:
                         'startDate': str(startDate) + 'daysAgo',
                         'endDate': str(endDate) + 'daysAgo'}],
                     'dimensions': [
-                        {'name': 'ga:dimension' + dimensionindex},
-                        # {'name': 'ga:clientId'},
+                        {'name': 'ga:clientId'},
                         {'name': 'ga:eventLabel'},
                         {'name': 'ga:date'}
                     ],
@@ -91,7 +90,7 @@ class ProcessData:
         # get timeframe (based on bq table updating frequency)
         # select sub dataframe by timeframe
         dfcurrent = dfbq[dfbq['date'] == datetime.now().strftime('%Y-%m-%d')]
-        # dfcurrent = dfbq[dfbq['date'] == (datetime.now() - timedelta(5)).strftime('%Y-%m-%d')]  # test
+        # dfcurrent = dfbq[dfbq['date'] == (datetime.now() - timedelta(1)).strftime('%Y-%m-%d')]  # test
         # select sub dataframe by domain
         dfcurrentsite = dfcurrent[dfcurrent['site'].str.contains(site)]
         # create list with phones  from sub dataframe
@@ -99,13 +98,12 @@ class ProcessData:
         return list_phones, dfContactCid
 
     @staticmethod
-    def sender(dfga, list_phones, dfContactCid, tracker, dimensionindex):
+    def sender(dfga, list_phones, dfContactCid, tracker):
         cnt = 0
         for phone in list_phones:
             matcher = dfga[dfga['eventLabel'].str.contains(str(phone))]
             if len(matcher):
-                cid = matcher['dimension' + str(dimensionindex)].iloc[0]
-                # cid = matcher['clientId'].iloc[0]
+                cid = matcher['clientId'].iloc[0]
                 cnt = cnt + 1
                 data = event('Verified Order', cid)
                 report(tracker, cid, data)
@@ -123,10 +121,10 @@ class ProcessData:
             prc = 'inf'
         log.info('{}, {} matched orders, {} all orders, {}% matched'.format(tracker, cnt, len(list_phones), prc))
 
-    def full(self, view, site, tracker, dimensionindex):
-        dfga = self.ga(view, dimensionindex)
+    def full(self, view, site, tracker):
+        dfga = self.ga(view)
         dfcurrentsite, dfContactCid = self.bq(site)
-        self.sender(dfga, dfcurrentsite, dfContactCid, tracker, dimensionindex)
+        self.sender(dfga, dfcurrentsite, dfContactCid, tracker)
 
 
 if __name__ == '__main__':
