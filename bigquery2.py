@@ -23,17 +23,24 @@ log.addHandler(filehandler)
 
 
 class ProcessData:
-    def __init__(self, google_cred_path, google_proj_id, date_time):
+    def __init__(self, google_cred_path, google_proj_id, date_time, send=True):
         # client init ga
         self.conn = GoogleAnalyticsQueryV4(secrets=google_cred_path)
         # client init bq
         self.cred = service_account.Credentials.from_service_account_file(google_cred_path)
         self.client = bigquery.Client(project=google_proj_id, credentials=self.cred)
         self.dt = date_time
+        self.send = send  # send to GA
 
     def ga(self, view):
-        startDate = 4
-        endDate = 0
+        """
+        get phones and cid from GA
+        :param view: GA view id
+        :return: pandas.DataFrame
+        """
+        # TODO: run it in concurrent tasks
+        date_start = 4
+        date_end = 0
         df_ga = pd.DataFrame()
         df_ga_temp = pd.DataFrame()
         for i in range(5):
@@ -41,8 +48,8 @@ class ProcessData:
                 'reportRequests': [{
                     'viewId': view,
                     'dateRanges': [{
-                        'startDate': str(startDate) + 'daysAgo',
-                        'endDate': str(endDate) + 'daysAgo'}],
+                        'startDate': str(date_start) + 'daysAgo',
+                        'endDate': str(date_end) + 'daysAgo'}],
                     'dimensions': [
                         {'name': 'ga:clientId'},
                         {'name': 'ga:eventLabel'},
@@ -66,13 +73,18 @@ class ProcessData:
                 except HttpError as msg:
                     log.exception(msg)
             df_ga = pd.concat([df_ga, df_ga_temp], sort=False)
-            startDate = startDate + 5
-            endDate = endDate + 5
+            date_start = date_start + 5
+            date_end = date_end + 5
         df_ga['eventLabel'] = df_ga['eventLabel'].str.replace('[^0-9]', '', regex=True)
         return df_ga
 
-    def bq(self, site):
-        # get all orders from bq
+    # TODO: get bq_order and bq_api_req data from BQ ones_with_cid view
+    def bq_order(self, site):
+        """
+        get list phones from orders
+        :param site: order site
+        :return: list phones
+        """
         df_order = self.client.query("""
             SELECT *
             FROM ones.order
@@ -80,8 +92,15 @@ class ProcessData:
               AND site LIKE  '{1}%'
          """.format(self.dt.strftime('%Y-%m-%d'), site)
                                  ).to_dataframe()
+        order_phones = list(df_order['phone'].unique())
+        return order_phones
 
-        # get api.request from bq only with cid
+    def bq_api_req(self, site):
+        """
+        get api.request from bq only with cid
+        :param site: requests site
+        :return: pandas.DataFrame
+        """
         df_api = self.client.query("""
             SELECT *
             FROM api.request
@@ -92,11 +111,18 @@ class ProcessData:
               AND cid != ''
         """.format((self.dt-timedelta(45)).strftime('%Y-%m-%d'), site)
                                   ).to_dataframe()
-        order_phones = list(df_order['phone'].unique())
-        return order_phones, df_api
+        return df_api
 
-    @staticmethod
-    def sender(tracker, order_phones, df_ga, df_api):
+    def sender(self, tracker, order_phones, df_ga, df_api):
+        """
+        find cid by phone number and send events to GA
+        :param tracker: GA traker
+        :param order_phones: list of order fhones
+        :param df_ga: pandas.DataFrame from GA
+        :param df_api: pandas.DataFrame from api.request
+        :return: None
+        """
+        # TODO: rewrite by concatenate both df, filter and send events to GA asynchronously
         cnt = 0
         for phone in order_phones:
             cid = None
@@ -112,7 +138,8 @@ class ProcessData:
             if cid:
                 cnt = cnt + 1
                 # send event to GA
-                report(tracker, cid, event('Verified Order', cid))
+                if self.send:
+                    report(tracker, cid, event('Verified Order', cid))
         try:
             prc = cnt / len(order_phones) * 100
             prc = round(prc, 2)
@@ -121,14 +148,22 @@ class ProcessData:
         log.info('{}, {} matched orders, {} all orders, {}% matched'.format(tracker, cnt, len(order_phones), prc))
 
     def full(self, view, site, tracker):
+        """
+        get data and run sender
+        :param view: GA view
+        :param site: site for get data
+        :param tracker: GA tracker
+        :return: None
+        """
+        # TODO: run this code in concurrent tasks
         df_ga = self.ga(view)
-        order_phones, df_api = self.bq(site)
+        df_api = self.bq_api_req(site)
+        order_phones = self.bq_order(site)
         self.sender(tracker, order_phones, df_ga, df_api)
 
 
 if __name__ == '__main__':
-    date_time = datetime.now()
-    # date_time = date_time - timedelta(2)  # testing
-    proc = ProcessData(GOOGLE_CRED_PATH, GOOGLE_PROJ_ID, date_time)
+    dt = datetime.now()
+    proc = ProcessData(GOOGLE_CRED_PATH, GOOGLE_PROJ_ID, dt)
     for proj in PROJ:
         proc.full(**proj)
