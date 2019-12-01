@@ -1,14 +1,11 @@
 import unittest
-from bigquery2 import ProcessData
-from config import GOOGLE_CRED_PATH, GOOGLE_PROJ_ID, PROJ, LOG_PATH
 from datetime import datetime, timedelta
+from bq2ga import process
 
 
 class Testing(unittest.TestCase):
     def setUp(self) -> None:
         self.dt = datetime.now() - timedelta(1)
 
-    def test_match(self):
-        proc = ProcessData(GOOGLE_CRED_PATH, GOOGLE_PROJ_ID, self.dt, send=False)
-        for proj in PROJ:
-            proc.full(**proj)
+    def test_main(self):
+        process(date_time=self.dt, send=True, events_label='Verified Order Testing')
