@@ -26,6 +26,8 @@ def resp2frame(resp):
         df = pd.DataFrame(columns=cols)
 
         rows = rpt.get('data', {}).get('rows')
+        if not rows:
+            return df
         for row in rows:
             d = row.get('dimensions', [])
 

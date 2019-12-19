@@ -44,7 +44,7 @@ class BQ:
         if in_sites:
             filter_sites = "and split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] in ('{}')".format('\',\''.join(in_sites))
         df = self.client.query("""
-                select ord.date, split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] site, ord.phone
+                select ord.date, split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] site, substr(ord.phone, -10) phone
                 ,if (req.cid is not null, req.cid, con.cid) cid
                 from `vocal-framework-241518.ones.order` ord
                 left join(
@@ -74,11 +74,11 @@ class GA:
     def __init__(self, google_cred_path, projects, step=5, samples=9, retries=10):
         """
         get data from GA
-        :param google_cred_path:
-        :param projects:
-        :param step:
-        :param samples:
-        :param retries:
+        :param google_cred_path: client_secret.json path
+        :param projects: list of parameters of projects
+        :param step: days for one query
+        :param samples: number of queries
+        :param retries: retries get data from GA
         """
         self.credentials = ServiceAccountCredentials.from_json_keyfile_name(
             google_cred_path, _default_scope)
@@ -88,8 +88,8 @@ class GA:
         self.samples = samples
         self.retries = retries
         self._task_args = None
-        if self.step <= 1:
-            raise Exception('step should be > 1')
+        if not self.step > 0:
+            raise Exception('step should be > 0')
 
     @property
     def task_args(self):
@@ -144,6 +144,8 @@ class GA:
                 resp = service.reports().batchGet(body=body).execute()
                 df = resp2frame(resp)
                 df.rename(columns={'eventLabel': 'phone', 'clientId': 'cid'}, inplace=True)
+                if df.empty:
+                    break
                 df.loc[:, 'site'] = site
                 df['phone'] = df['phone'].str.replace('[^0-9]', '', regex=True)
                 df['phone'] = df['phone'].str.slice(-10)
@@ -155,7 +157,7 @@ class GA:
 
     def get_results(self):
         """
-        get data for multiply queries
+        make multiple queries and concat them all together
         :return: pandas.DataFrame
         """
         df = pd.DataFrame()
@@ -268,10 +270,18 @@ def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
 
 def main():
     dt = datetime.now()
-    # dt = datetime.now() - timedelta(1)
-    # log.setLevel(logging.DEBUG)
-    process(date_time=dt, send=True, events_label='Verified Order')
+    events_label = 'Verified Order'
+    process(date_time=dt, send=True, events_label=events_label)
+
+
+def main_debug():
+    # for testing
+    dt = datetime.now() - timedelta(1)
+    log.setLevel(logging.DEBUG)
+    events_label = 'Verified Order Testing'
+    process(date_time=dt, send=False, events_label=events_label)
 
 
 if __name__ == '__main__':
+    # main_debug()
     main()
