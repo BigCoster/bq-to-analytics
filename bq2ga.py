@@ -44,27 +44,34 @@ class BQ:
         if in_sites:
             filter_sites = "and split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] in ('{}')".format('\',\''.join(in_sites))
         df = self.client.query("""
-                select ord.date, split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] site, substr(ord.phone, -10) phone
-                ,if (req.cid is not null, req.cid, con.cid) cid
-                from `vocal-framework-241518.ones.order` ord
-                left join(
-                    select substr(phone, -10) phone, site, array_agg(ar.cid order by ar.date desc limit 1)[OFFSET(0)] cid
-                    from `vocal-framework-241518.api.request` ar
-                    where length(ar.phone) >= 6 
-                    and ar.cid not in('0', '', 'cidTest')
-                    group by phone, site
-                ) req on req.phone = ord.phone and req.site = ord.site
-                left join(
-                    select substr(phone, -10) phone, site, array_agg(c.cid order by c.date desc limit 1)[OFFSET(0)] cid
-                    from `vocal-framework-241518.ones.contact` c
-                    where length(c.phone) >= 6 
-                    and c.cid is not null 
-                    and c.cid not in ('0', '', 'cidTest')
-                    group by phone, site
-                ) con on con.phone = ord.phone and con.site = ord.site
-                where ord.phone != ''
-                and date(ord.date) = '{date}'
-                {filter_sites}
+            select ord.date, split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] site, substr(ord.phone, -10) phone
+            ,if (req.cid is not null, req.cid, con.cid) cid, inv.amount amount
+            from `vocal-framework-241518.ones.order` ord
+            left join(
+                select substr(phone, -10) phone, site, array_agg(ar.cid order by ar.date desc limit 1)[OFFSET(0)] cid
+                from `vocal-framework-241518.api.request` ar
+                where length(ar.phone) >= 6 
+                and ar.cid not in('0', '', 'cidTest')
+                group by phone, site
+            ) req on req.phone = ord.phone and req.site = ord.site
+            left join(
+                select substr(phone, -10) phone, site, array_agg(c.cid order by c.date desc limit 1)[OFFSET(0)] cid
+                from `vocal-framework-241518.ones.contact` c
+                where length(c.phone) >= 6 
+                and c.cid is not null 
+                and c.cid not in ('0', '', 'cidTest')
+                group by phone, site
+            ) con on con.phone = ord.phone and con.site = ord.site
+            left join (
+                select date, substr(phone, -10) phone, site, array_agg(i.amount order by i.date desc limit 1)[OFFSET(0)] amount 
+                from `vocal-framework-241518.ones.invoice` i
+                where length(i.phone) >= 6
+                group by date, phone, site
+                order by i.date desc
+            ) inv on ord.phone = inv.phone and ord.site = inv.site and ord.date = inv.date
+            where ord.phone != ''
+            and date(ord.date) = '{date}'
+            {filter_sites}
         """.format(date=date.strftime('%Y-%m-%d'), filter_sites=filter_sites)
                                   ).to_dataframe()
         return df
@@ -199,12 +206,12 @@ class GAEvent:
     def __init__(self, events_label):
         self.events_label = events_label
 
-    def send_event(self, tracker, cid):
-        return report(tracker, cid, event(self.events_label, cid))
+    def send_event(self, tracker, cid, amount):
+        return report(tracker, cid, event(self.events_label, cid, value=amount))
 
     async def send_event_task(self, loop, executor, events):
         done, pending = await asyncio.wait(
-            fs=[loop.run_in_executor(executor, self.send_event, *(args['tracker'], args['cid'])) for args in events],
+            fs=[loop.run_in_executor(executor, self.send_event, *(args['tracker'], args['cid'], args['amount'])) for args in events],
             return_when=asyncio.ALL_COMPLETED
         )
         return done
@@ -236,7 +243,7 @@ def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
     df_ga = df_ga.sort_values(by='date').groupby(['site', 'phone']).last().reset_index()
 
     # merge BQ and GA data
-    df_cid = pd.merge(df_bq[['site', 'phone', 'cid']], df_ga.reset_index()[['site', 'phone', 'cid']], how='left',
+    df_cid = pd.merge(df_bq[['site', 'phone', 'cid', 'amount']], df_ga.reset_index()[['site', 'phone', 'cid']], how='left',
                       on=['site', 'phone'], copy=False, indicator='exist', suffixes=('_bq', '_ga'))
     df_cid['cid'] = df_cid['cid_bq'].where(~df_cid['cid_bq'].isna(), df_cid['cid_ga'], axis=0)
     # calc statistic
@@ -255,7 +262,7 @@ def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
         tracker_map = {p['site']: p['tracker'] for p in PROJ}
         df_cid.loc[:, 'tracker'] = df_cid['site'].map(tracker_map)
         # only with cid
-        events = df_cid[['tracker', 'cid']][~df_cid['cid'].isna()].to_dict('records')
+        events = df_cid[['tracker', 'cid', 'amount']][~df_cid['cid'].isna()].fillna(0).round(0).to_dict('records')
         # all
         # events = df_cid[['tracker', 'cid']].to_dict('records')
 
