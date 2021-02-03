@@ -44,31 +44,41 @@ class BQ:
         if in_sites:
             filter_sites = "and split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] in ('{}')".format('\',\''.join(in_sites))
         df = self.client.query("""
-            select ord.date, split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] site, substr(ord.phone, -10) phone
-            ,if (req.cid is not null, req.cid, con.cid) cid, inv.amount amount
-            from `vocal-framework-241518.ones.order` ord
+            select ord.date, ord.doc, ord.site, ord.phone phone, coalesce(req.cid, con.cid, jiv.cid) cid, ord.amount
+            from
+            (select date, doc, substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
+            split(split(site, ' ')[offset(0)], '_')[offset(0)] site, amount
+            from `vocal-framework-241518.ones.order_with_amount_grouped` o) ord
             left join(
-                select substr(phone, -10) phone, site, array_agg(ar.cid order by ar.date desc limit 1)[OFFSET(0)] cid
+                select substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
+                split(split(site, ' ')[offset(0)], '_')[offset(0)] site, 
+                array_agg(ar.cid order by ar.date desc limit 1)[OFFSET(0)] cid
                 from `vocal-framework-241518.api.request` ar
-                where length(ar.phone) >= 6 
+                where length(ar.phone) >= 6
+                and ar.cid is not null
                 and ar.cid not in('0', '', 'cidTest')
                 group by phone, site
             ) req on req.phone = ord.phone and req.site = ord.site
             left join(
-                select substr(phone, -10) phone, site, array_agg(c.cid order by c.date desc limit 1)[OFFSET(0)] cid
+                select substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
+                split(split(site, ' ')[offset(0)], '_')[offset(0)] site, 
+                array_agg(c.cid order by c.date desc limit 1)[OFFSET(0)] cid
                 from `vocal-framework-241518.ones.contact` c
                 where length(c.phone) >= 6 
                 and c.cid is not null 
                 and c.cid not in ('0', '', 'cidTest')
                 group by phone, site
             ) con on con.phone = ord.phone and con.site = ord.site
-            left join (
-                select date, substr(phone, -10) phone, site, array_agg(i.amount order by i.date desc limit 1)[OFFSET(0)] amount 
-                from `vocal-framework-241518.ones.invoice` i
-                where length(i.phone) >= 6
-                group by date, phone, site
-                order by i.date desc
-            ) inv on ord.phone = inv.phone and ord.site = inv.site and ord.date = inv.date
+            left join(
+                select substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
+                split(split(site, ' ')[offset(0)], '_')[offset(0)] site, 
+                array_agg(ar.ga_cid order by ar.date desc limit 1)[OFFSET(0)] cid
+                from `vocal-framework-241518.api.jivohooks` ar
+                where length(ar.phone) >= 6
+                and ar.ga_cid is not null
+                and ar.ga_cid not in('0', '', 'cidTest')
+                group by phone, site
+            ) jiv on jiv.phone = ord.phone and jiv.site = ord.site
             where ord.phone != ''
             and date(ord.date) = '{date}'
             {filter_sites}
@@ -158,7 +168,7 @@ class GA:
                 df['phone'] = df['phone'].str.slice(-10)
                 break
             except HttpError as msg:
-                log.exception('{} ago_start_end({},{})\n{}'.format(site, ago_start, ago_end, msg))
+                log.error('{} ago_start_end({},{})\n{}'.format(site, ago_start, ago_end, msg))
         log.debug('{} ago_start_end({},{}) records({})'.format(site, ago_start, ago_end, df.shape[0]))
         return df
 
