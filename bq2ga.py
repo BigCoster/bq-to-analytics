@@ -44,11 +44,11 @@ class BQ:
         if in_sites:
             filter_sites = "and split(split(ord.site, ' ')[offset(0)], '_')[offset(0)] in ('{}')".format('\',\''.join(in_sites))
         df = self.client.query("""
-            select ord.date, ord.doc, ord.site, ord.phone phone, coalesce(req.cid, con.cid, jiv.cid) cid, ord.amount
+            select ord.date, ord.doc, ord.site, ord.phone phone, coalesce(req.cid, con.cid, jiv.cid, comm.cid) cid, ord.amount
             from
             (select date, doc, substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
             split(split(site, ' ')[offset(0)], '_')[offset(0)] site, amount
-            from `vocal-framework-241518.ones.order_with_amount_grouped` o) ord
+            from `vocal-framework-241518.ones.order_wo_probes` o) ord
             left join(
                 select substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
                 split(split(site, ' ')[offset(0)], '_')[offset(0)] site, 
@@ -79,6 +79,16 @@ class BQ:
                 and ar.ga_cid not in('0', '', 'cidTest')
                 group by phone, site
             ) jiv on jiv.phone = ord.phone and jiv.site = ord.site
+            left join (
+                select substr(REGEXP_REPLACE(phone, '[^0-9]',''), -10) phone, 
+                split(split(site, ' ')[offset(0)], '_')[offset(0)] site, 
+                array_agg(ar.cid order by ar.date desc limit 1)[OFFSET(0)] cid
+                from `vocal-framework-241518.eis.communication` ar
+                where length(ar.phone) >= 6
+                and ar.cid is not null
+                and ar.cid not in('0', '', 'cidTest')
+                group by phone, site            
+            ) comm on comm.phone = ord.phone and comm.site = ord.site
             where ord.phone != ''
             and date(ord.date) = '{date}'
             {filter_sites}
