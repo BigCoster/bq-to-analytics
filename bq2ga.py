@@ -227,7 +227,8 @@ class GAEvent:
         self.events_label = events_label
 
     def send_event(self, tracker, cid, amount):
-        return report(tracker, cid, event(self.events_label, cid, value=amount))
+        resp = report(tracker, cid, event(self.events_label, cid, value=amount))
+        return resp
 
     async def send_event_task(self, loop, executor, events):
         done, pending = await asyncio.wait(
@@ -246,19 +247,20 @@ class GAEvent:
 
 
 def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
-    dt = datetime.now()
+    log.info('orders for day: {}'.format(date_time.date()))
+    execution_start = datetime.now()  # start time for debug
     # get data from BQ
     bq = BQ(GOOGLE_CRED_PATH, GOOGLE_PROJ_ID)
     sites = [p['site'] for p in PROJ]
     # orders with partial cid
     df_bq = bq.order_with_sid(sites, date_time)
-    log.debug('BQ orders: {} '.format(df_bq.shape[0]))
+    log.info('BQ orders: {} '.format(df_bq.shape[0]))
 
     # get data from GA
     ga = GA(GOOGLE_CRED_PATH, PROJ)
     # df_ga = ga.get_results()  # get data in synchronously way
     df_ga = ga.get_results_async()  # get data asynchronously
-    log.debug('GA orders: {} '.format(df_ga.shape[0]))
+    log.info('GA orders: {} '.format(df_ga.shape[0]))
     # drop duplicates
     df_ga = df_ga.sort_values(by='date').groupby(['site', 'phone']).last().reset_index()
 
@@ -289,14 +291,16 @@ def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
         # send events to GA
         gae = GAEvent(events_label)
         res = gae.send_events_async(events)
+        log.info('send GA events: {}'.format(len(res)))
         errors = {r[0].status_code for r in res}.difference((200,))
         if errors:
             log.error('send some evens fails with status codes {}'.format(errors))
-    log.debug('exec time: {}'.format(datetime.now()-dt))
+    log.info('exec time: {}'.format(datetime.now()-execution_start))
 
 
 def main():
     dt = datetime.now()
+    # dt = datetime(year=2021, month=12, day=19)  # manual seeding
     events_label = 'Verified Order'
     process(date_time=dt, send=True, events_label=events_label)
 
@@ -304,9 +308,10 @@ def main():
 def main_debug():
     # for testing
     dt = datetime.now() - timedelta(1)
+    # dt = datetime(year=2021, month=12, day=15)  # manual seeding
     log.setLevel(logging.DEBUG)
     events_label = 'Verified Order Testing'
-    process(date_time=dt, send=False, events_label=events_label)
+    process(date_time=dt, send=True, events_label=events_label)
 
 
 if __name__ == '__main__':

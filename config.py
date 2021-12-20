@@ -6,6 +6,7 @@ GOOGLE_CRED_PATH = os.path.join(basedir, 'client_secret.json')
 GOOGLE_PROJ_ID = 'vocal-framework-241518'
 
 LOG_PATH = os.path.join(basedir, 'app.log')
+# LOG_PATH = '/var/log/uwsgi/bq2ga.log'
 
 PROJ = [
     {'view': '172487921', 'site': 'abc-decor.com', 'tracker': 'UA-116546585-1'},
