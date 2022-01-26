@@ -223,16 +223,17 @@ class GA:
 
 
 class GAEvent:
-    def __init__(self, events_label):
-        self.events_label = events_label
+    def __init__(self, category):
+        self.category = category
 
-    def send_event(self, tracker, cid, amount):
-        resp = report(tracker, cid, event(self.events_label, cid, value=amount))
+    def send_event(self, tracker, cid, doc, amount):
+        resp = report(tracker, cid, event(category=self.category, action=cid, label=doc, value=amount))
         return resp
 
     async def send_event_task(self, loop, executor, events):
         done, pending = await asyncio.wait(
-            fs=[loop.run_in_executor(executor, self.send_event, *(args['tracker'], args['cid'], args['amount'])) for args in events],
+            fs=[loop.run_in_executor(executor, self.send_event,
+                                     *(args['tracker'], args['cid'], args['doc'], args['amount'])) for args in events],
             return_when=asyncio.ALL_COMPLETED
         )
         return done
@@ -265,7 +266,8 @@ def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
     df_ga = df_ga.sort_values(by='date').groupby(['site', 'phone']).last().reset_index()
 
     # merge BQ and GA data
-    df_cid = pd.merge(df_bq[['site', 'phone', 'cid', 'amount']], df_ga.reset_index()[['site', 'phone', 'cid']], how='left',
+    df_cid = pd.merge(df_bq[['site', 'doc', 'phone', 'cid', 'amount']],
+                      df_ga.reset_index()[['site', 'phone', 'cid']], how='left',
                       on=['site', 'phone'], copy=False, indicator='exist', suffixes=('_bq', '_ga'))
     df_cid['cid'] = df_cid['cid_bq'].where(~df_cid['cid_bq'].isna(), df_cid['cid_ga'], axis=0)
     # calc statistic
@@ -284,7 +286,7 @@ def process(date_time=datetime.now(), send=True, events_label='Verified Order'):
         tracker_map = {p['site']: p['tracker'] for p in PROJ}
         df_cid.loc[:, 'tracker'] = df_cid['site'].map(tracker_map)
         # only with cid
-        events = df_cid[['tracker', 'cid', 'amount']][~df_cid['cid'].isna()].fillna(0).round(0).to_dict('records')
+        events = df_cid[['tracker', 'cid', 'doc', 'amount']][~df_cid['cid'].isna()].fillna(0).round(0).to_dict('records')
         # all
         # events = df_cid[['tracker', 'cid']].to_dict('records')
 
